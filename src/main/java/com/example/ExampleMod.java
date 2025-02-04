@@ -1,6 +1,5 @@
 package com.example;
 
-import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.minecraft.block.Block;
@@ -14,7 +13,6 @@ import net.minecraft.entity.passive.VillagerEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.EnchantedBookItem;
 import net.minecraft.item.ItemStack;
-import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
@@ -110,7 +108,7 @@ public class ExampleMod implements ModInitializer {
                 Optional<GlobalPos> jobSitePosOptional = villager.getBrain().getOptionalMemory(MemoryModuleType.JOB_SITE);
                 // Convert GlobalPos to BlockPos and compare with clicked lectern
                 if (jobSitePosOptional != null && jobSitePosOptional.isPresent()) {
-                    BlockPos jobSitePos = jobSitePosOptional.get().pos(); // Extract BlockPos from GlobalPos
+                    BlockPos jobSitePos = jobSitePosOptional.get().getPos(); // Extract BlockPos from GlobalPos
                     if (jobSitePos.equals(clickedPos)) {
                         if (villager.getExperience() == 0) {
                             return filterTrade(player, world, villager, filters);
@@ -150,9 +148,9 @@ public class ExampleMod implements ModInitializer {
                         ItemStack sellItem = trade.getSellItem();
                         if (sellItem.getItem() instanceof EnchantedBookItem) {
                             // Get enchantments on the book
-                            for (Object2IntMap.Entry<RegistryEntry<Enchantment>> entry : EnchantmentHelper.getEnchantments(sellItem).getEnchantmentsMap()) {
-                                String idAsString = entry.getKey().getIdAsString().split(":")[1];
-                                int intValue = entry.getIntValue();
+                            for (Map.Entry<Enchantment, Integer> entry : EnchantmentHelper.get(sellItem).entrySet()) {
+                                String idAsString = entry.getKey().getTranslationKey().split(":")[1];
+                                int intValue = entry.getValue();
                                 for (EnchFilter filter : filters) {
                                     if (idAsString.startsWith(filter.enchName.toLowerCase()) && intValue == filter.enchLevel) {
                                         cooldownMap.put(playerUUID, currentTime);
