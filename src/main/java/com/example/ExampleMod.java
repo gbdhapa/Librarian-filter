@@ -35,6 +35,7 @@ public class ExampleMod implements ModInitializer {
     private static final HashMap<UUID, Long> cooldownMap = new HashMap<>();
     private static final long COOLDOWN_TIME = 1000; // in milliseconds
     private static final int VILLAGER_SEARCH_RADIUS = 128; //in blocks
+    private static final String enchantmentRegex = "enchantment.minecraft.";
 
 
     @Override
@@ -149,7 +150,7 @@ public class ExampleMod implements ModInitializer {
                         if (sellItem.getItem() instanceof EnchantedBookItem) {
                             // Get enchantments on the book
                             for (Map.Entry<Enchantment, Integer> entry : EnchantmentHelper.get(sellItem).entrySet()) {
-                                String idAsString = entry.getKey().getTranslationKey().split(":")[1];
+                                String idAsString = entry.getKey().getTranslationKey().split(enchantmentRegex)[1];
                                 int intValue = entry.getValue();
                                 for (EnchFilter filter : filters) {
                                     if (idAsString.startsWith(filter.enchName.toLowerCase()) && intValue == filter.enchLevel) {
