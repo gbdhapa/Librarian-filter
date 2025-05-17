@@ -1,6 +1,6 @@
 {
 	"schemaVersion": 1,
-	"id": "modid",
+	"id": "elt",
 	"version": "${version}",
 	"name": "Easy Librarian Trade",
 	"description": "Mod to get desired enchantment book trade from librarian",
