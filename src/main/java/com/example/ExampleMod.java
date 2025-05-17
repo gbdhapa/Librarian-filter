@@ -140,17 +140,18 @@ public class ExampleMod implements ModInitializer {
                 }
             }
             if (villager != null) {
+                Registry<VillagerProfession> registry = world.getRegistryManager().getOrThrow(RegistryKeys.VILLAGER_PROFESSION);
+                RegistryEntry.Reference<VillagerProfession> villagerNone = registry.getOrThrow(VillagerProfession.NONE);
+                RegistryEntry.Reference<VillagerProfession> villagerLibrarian = registry.getOrThrow(VillagerProfession.LIBRARIAN);
                 int recycleCount = 0;
                 while (recycleCount <= 10000) {
-                    Registry<VillagerProfession> registry = world.getRegistryManager().getOrThrow(RegistryKeys.VILLAGER_PROFESSION);
 
-
-                    villager.setVillagerData(villager.getVillagerData().withProfession(registry.getOrThrow(VillagerProfession.NONE)));
+                    villager.setVillagerData(villager.getVillagerData().withProfession(villagerNone));
                     // Wait a tick to let Minecraft update (optional, if needed)
                     villager.refreshPositionAndAngles(villager.getX(), villager.getY(), villager.getZ(), villager.getYaw(), villager.getPitch());
 
                     // REASSIGN librarian profession (force trade refresh)
-                    villager.setVillagerData(villager.getVillagerData().withProfession(registry.getOrThrow(VillagerProfession.LIBRARIAN)));
+                    villager.setVillagerData(villager.getVillagerData().withProfession(villagerLibrarian));
                     recycleCount++;
                     for (TradeOffer trade : villager.getOffers()) {
                         ItemStack sellItem = trade.getSellItem();
