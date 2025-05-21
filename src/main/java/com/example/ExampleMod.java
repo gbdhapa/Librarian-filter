@@ -1,181 +1,174 @@
 package com.example;
 
-import it.unimi.dsi.fastutil.objects.Object2IntMap;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ModInitializer;
-import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
-import net.minecraft.block.LecternBlock;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.enchantment.Enchantment;
-import net.minecraft.enchantment.EnchantmentHelper;
-import net.minecraft.entity.ai.brain.MemoryModuleType;
-import net.minecraft.entity.passive.VillagerEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.Registry;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.command.argument.BlockStateArgument;
+import net.minecraft.command.argument.BlockStateArgumentType;
+import net.minecraft.registry.Registries;
+import net.minecraft.registry.tag.StructureTags;
+import net.minecraft.server.command.CommandManager;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
-import net.minecraft.util.ActionResult;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.GlobalPos;
-import net.minecraft.village.TradeOffer;
-import net.minecraft.village.VillagerProfession;
+import net.minecraft.world.Heightmap;
 import net.minecraft.world.World;
-import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.*;
+import java.util.HashSet;
+import java.util.Set;
+
+import static net.minecraft.server.command.CommandManager.argument;
+import static net.minecraft.server.command.CommandManager.literal;
 
 public class ExampleMod implements ModInitializer {
-    public static final String MOD_ID = "elt";
-    public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
-
-    private static final HashMap<UUID, Long> cooldownMap = new HashMap<>();
-    private static final long COOLDOWN_TIME = 1000; // in milliseconds
-    private static final int VILLAGER_SEARCH_RADIUS = 128; //in blocks
-    private static final String enchantmentRegex = "minecraft:enchantment / minecraft:";
+    public static final Logger LOGGER = LoggerFactory.getLogger(ExampleMod.class);
+    private static Set<Block> REPLACEABLE_BLOCKS = new HashSet<>(Set.of(
+            Blocks.DIRT_PATH,
+            Blocks.GRASS_BLOCK,
+            Blocks.DIRT,
+            Blocks.COARSE_DIRT,
+            Blocks.PODZOL,
+            Blocks.ROOTED_DIRT,
+            Blocks.SAND,
+            Blocks.GRAVEL,
+            Blocks.STONE,
+            Blocks.SNOW_BLOCK,
+            Blocks.PACKED_ICE,
+            Blocks.POWDER_SNOW
+    ));
 
 
     @Override
     public void onInitialize() {
         LOGGER.info("Mod initialized!");
-
-        registerEvent();
+        register();
     }
 
-    private void registerEvent() {
-        // Register the event to listen for right-click interactions
-        UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
-            BlockPos clickedPos = hitResult.getBlockPos();
-            Block blockClicked = world.getBlockState(clickedPos).getBlock();
-            Text[] signTexts = getSignTexts(world, blockClicked, clickedPos);
-            List<EnchFilter> filters = getEnchFilters(signTexts);
-            if (!filters.isEmpty()) {
-                ActionResult result = getVillagerForLectern(player, world, clickedPos, filters);
-                if (result != null) {
-                    return result;
-                }
-            }
-            return ActionResult.PASS; // Continue normal behavior for other blocks
+
+    private void register() {
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            dispatcher.register(
+                    CommandManager.literal("hmm")
+                            .executes(context -> {
+                                ServerPlayerEntity player = context.getSource().getPlayer();
+                                ServerWorld world = player.getServerWorld();
+                                BlockPos villagePos = findNearestPlainsVillage(world, player.getBlockPos());
+                                if (villagePos != null) {
+                                    createPathTo(player.getBlockPos(), villagePos, world);
+                                    player.getWorld().setBlockState(villagePos.up(), Blocks.OAK_SIGN.getDefaultState());
+                                    player.sendMessage(Text.of("Path to village created!"), false);
+                                } else {
+                                    player.sendMessage(Text.of("No village found nearby."), false);
+                                }
+                                return 1;
+                            })
+            );
+        });
+
+
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            dispatcher.register(literal("hmmAdd")
+                    .then(argument("blockId", BlockStateArgumentType.blockState(registryAccess))
+                            .executes(ctx -> {
+                                Block block = BlockStateArgumentType.getBlockState(ctx, "blockId").getBlockState().getBlock();
+                                if (block != Blocks.AIR) {
+                                    REPLACEABLE_BLOCKS.add(block);
+                                    ctx.getSource().sendFeedback(
+                                            () -> Text.literal("Added block " + block.getTranslationKey() + " in replaceable list."), true);
+
+                                } else {
+                                    ctx.getSource().sendFeedback(
+                                            () -> Text.literal("Cannot add block " + block.getTranslationKey() + " in replaceable list."), true);
+                                }
+                                return 1;
+                            })));
+        });
+
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            dispatcher.register(literal("hmmRemove")
+                    .then(argument("blockId", BlockStateArgumentType.blockState(registryAccess))
+                            .executes(ctx -> {
+                                Block block = BlockStateArgumentType.getBlockState(ctx, "blockId").getBlockState().getBlock();
+                                REPLACEABLE_BLOCKS.remove(block);
+                                ctx.getSource().sendFeedback(
+                                        () -> Text.literal("Removed block " + block.getTranslationKey() + " from replaceable list."), true);
+                                return 1;
+                            })));
         });
     }
 
-    private List<EnchFilter> getEnchFilters(Text[] signTexts) {
-        List<EnchFilter> filters = new ArrayList<>();
-        if (signTexts != null) {
-            for (Text line : signTexts) {
-                if (line.getString() != null) {
-                    String[] filterText = line.getString().trim().split(" ");
-                    if (filterText.length > 1) {
-                        if (StringUtils.isNumeric(filterText[1])) {
-                            int enchLevel = Integer.parseInt(filterText[1]);
-                            if (enchLevel > 0) {
-                                filters.add(new EnchFilter(filterText[0], enchLevel));
-                            }
-                        }
-                    }
-                }
+    private BlockPos findNearestPlainsVillage(ServerWorld world, BlockPos origin) {
+        return world.locateStructure(
+                StructureTags.VILLAGE,
+                origin,
+                1000,
+                false// skip unexplored chunks?
+        );
+    }
+
+    // 3. Create simple path (straight line) by placing blocks
+    private void placePathBlock(World world, BlockPos pos) {
+        world.setBlockState(pos, Blocks.DIRT_PATH.getDefaultState());
+    }
+
+    private void createPathTo(BlockPos start, BlockPos end, World world) {
+        int length = (int) start.getSquaredDistance(end);
+        if (length == 0) return;
+
+        // Direction vector (normalized on XZ)
+        double dx = end.getX() - start.getX();
+        double dz = end.getZ() - start.getZ();
+        double dist = Math.sqrt(dx * dx + dz * dz);
+        double nx = dx / dist;
+        double nz = dz / dist;
+
+        // Perpendicular vector on XZ (left/right)
+        double px = -nz;
+        double pz = nx;
+
+        for (int i = 0; i <= length; i++) {
+            double t = (double) i / length;
+            int x = (int) Math.round(lerp(start.getX(), end.getX(), t));
+            int y = start.getY(); // or find ground height for each x,z if you want
+            int z = (int) Math.round(lerp(start.getZ(), end.getZ(), t));
+
+            BlockPos center = new BlockPos(x, y, z);
+            BlockPos topSolidBlock = findTopSolidBlock(world, center);
+            // center path block
+            placePathBlock(world, topSolidBlock);
+            // left side
+            placePathBlock(world, topSolidBlock.add((int) Math.round(px), 0, (int) Math.round(pz)));
+            // right side
+            placePathBlock(world, topSolidBlock.add((int) Math.round(-px), 0, (int) Math.round(-pz)));
+        }
+    }
+
+    // Helper lerp method
+    private double lerp(double a, double b, double t) {
+        return a + (b - a) * t;
+    }
+
+    private BlockPos findTopSolidBlock(World world, BlockPos pos) {
+        int x = pos.getX();
+        int z = pos.getZ();
+        int y = world.getTopY(Heightmap.Type.WORLD_SURFACE, pos); // start from top of the world
+
+        for (; y > world.getBottomY(); y--) {
+            BlockPos checkPos = new BlockPos(x, y, z);
+            BlockState state = world.getBlockState(checkPos);
+
+            if (REPLACEABLE_BLOCKS.contains(state.getBlock())) {
+                return checkPos;
             }
         }
-        return filters;
+        return pos; // fallback
     }
 
-    private Text[] getSignTexts(World world, Block blockClicked, BlockPos clickedPos) {
-
-        // Check if the block clicked is a lectern
-        if (blockClicked == Blocks.LECTERN) {
-            // Get the lectern's facing direction
-            Direction facingDirection = world.getBlockState(clickedPos).get(LecternBlock.FACING);
-
-            // Get the position in front of the lectern (based on its facing direction)
-            BlockPos signPos = clickedPos.offset(facingDirection);
-            // Get the BlockEntity (SignBlockEntity) of the WallSign
-            if (world.getBlockEntity(signPos) instanceof SignBlockEntity signEntity) {
-                // Retrieve the text written on the sign
-                return signEntity.getText(true).getMessages(false); // Get the text on the first line (index 0)
-            }
-
-        }
-        return null;
-    }
-
-    private ActionResult getVillagerForLectern(PlayerEntity player, World world, BlockPos clickedPos, List<EnchFilter> filters) {
-        List<VillagerEntity> nearbyEntities = world.getEntitiesByClass(VillagerEntity.class, player.getBoundingBox().expand(VILLAGER_SEARCH_RADIUS), (entity) -> true);
-        for (VillagerEntity villager : nearbyEntities) {
-            Registry<VillagerProfession> registry = world.getRegistryManager().getOrThrow(RegistryKeys.VILLAGER_PROFESSION);
-            RegistryEntry.Reference<VillagerProfession> librarian = registry.getOrThrow(VillagerProfession.LIBRARIAN);
-            // Check if the villager is a librarian
-            if (librarian.equals(villager.getVillagerData().profession())) {
-                Optional<GlobalPos> jobSitePosOptional = villager.getBrain().getOptionalMemory(MemoryModuleType.JOB_SITE);
-                // Convert GlobalPos to BlockPos and compare with clicked lectern
-                if (jobSitePosOptional != null && jobSitePosOptional.isPresent()) {
-                    BlockPos jobSitePos = jobSitePosOptional.get().pos(); // Extract BlockPos from GlobalPos
-                    if (jobSitePos.equals(clickedPos)) {
-                        if (villager.getExperience() == 0) {
-                            return filterTrade(player, world, villager, filters);
-                        }
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    private ActionResult filterTrade(PlayerEntity player, World world, VillagerEntity villager, List<EnchFilter> filters) {
-        if (world instanceof ServerWorld) {
-            UUID playerUUID = player.getUuid();
-            long currentTime = System.currentTimeMillis();
-            // Check if the player is still on cooldown
-            if (cooldownMap.containsKey(playerUUID)) {
-                long lastClickTime = cooldownMap.get(playerUUID);
-                long difference = currentTime - lastClickTime;
-                if (difference < COOLDOWN_TIME) {
-                    return ActionResult.FAIL; // Prevents further execution
-                }
-            }
-            if (villager != null) {
-                Registry<VillagerProfession> registry = world.getRegistryManager().getOrThrow(RegistryKeys.VILLAGER_PROFESSION);
-                RegistryEntry.Reference<VillagerProfession> villagerNone = registry.getOrThrow(VillagerProfession.NONE);
-                RegistryEntry.Reference<VillagerProfession> villagerLibrarian = registry.getOrThrow(VillagerProfession.LIBRARIAN);
-                int recycleCount = 0;
-                while (recycleCount <= 10000) {
-
-                    villager.setVillagerData(villager.getVillagerData().withProfession(villagerNone));
-                    // Wait a tick to let Minecraft update (optional, if needed)
-                    villager.refreshPositionAndAngles(villager.getX(), villager.getY(), villager.getZ(), villager.getYaw(), villager.getPitch());
-
-                    // REASSIGN librarian profession (force trade refresh)
-                    villager.setVillagerData(villager.getVillagerData().withProfession(villagerLibrarian));
-                    recycleCount++;
-                    for (TradeOffer trade : villager.getOffers()) {
-                        ItemStack sellItem = trade.getSellItem();
-                        if (sellItem.getItem() == Items.ENCHANTED_BOOK) {
-                            // Get enchantments on the book
-                            for (Object2IntMap.Entry<RegistryEntry<Enchantment>> entry : EnchantmentHelper.getEnchantments(sellItem).getEnchantmentEntries()) {
-                                String string = entry.getKey().toString();
-                                String idAsString = string.split(enchantmentRegex)[1];
-                                int intValue = entry.getIntValue();
-                                for (EnchFilter filter : filters) {
-                                    if (idAsString.startsWith(filter.enchName.toLowerCase()) && intValue == filter.enchLevel) {
-                                        cooldownMap.put(playerUUID, currentTime);
-                                        return ActionResult.SUCCESS;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return ActionResult.PASS;
-    }
-
-    public record EnchFilter(String enchName, int enchLevel) {
-    }
 }
