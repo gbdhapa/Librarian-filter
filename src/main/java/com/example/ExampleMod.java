@@ -16,6 +16,7 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.World;
 import org.slf4j.Logger;
@@ -53,20 +54,16 @@ public class ExampleMod implements ModInitializer {
 
 
     private void register() {
+        registerCommands();
+    }
+
+    private void registerCommands() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
             dispatcher.register(
                     CommandManager.literal("hmm")
                             .executes(context -> {
                                 ServerPlayerEntity player = context.getSource().getPlayer();
-                                ServerWorld world = player.getServerWorld();
-                                BlockPos villagePos = findNearestPlainsVillage(world, player.getBlockPos());
-                                if (villagePos != null) {
-                                    createPathTo(player.getBlockPos(), villagePos, world);
-                                    player.getWorld().setBlockState(villagePos.up(), Blocks.OAK_SIGN.getDefaultState());
-                                    player.sendMessage(Text.of("Path to village created!"), false);
-                                } else {
-                                    player.sendMessage(Text.of("No village found nearby."), false);
-                                }
+                                createVillagePath(player);
                                 return 1;
                             })
             );
@@ -104,6 +101,38 @@ public class ExampleMod implements ModInitializer {
         });
     }
 
+    private void createVillagePath(ServerPlayerEntity player) {
+        ServerWorld world = player.getServerWorld();
+        BlockPos villagePos = findNearestPlainsVillage(world, player.getBlockPos());
+        if (villagePos != null) {
+            createPathTo(world, player.getBlockPos(), villagePos);
+            player.getWorld().setBlockState(villagePos.up(), Blocks.OAK_SIGN.getDefaultState());
+            player.sendMessage(Text.of("Path to village created!"), false);
+        } else {
+            player.sendMessage(Text.of("No village found nearby."), false);
+        }
+        createPathToAnotherVillager(world, villagePos);
+    }
+
+    private void createPathToAnotherVillager(ServerWorld world, BlockPos villagePos) {
+        BlockPos secondVillage = find2ndNearestPlainsVillage(world, villagePos);
+        createPathTo(world, villagePos, secondVillage);
+    }
+
+
+    private BlockPos find2ndNearestPlainsVillage(ServerWorld world, BlockPos origin) {
+        BlockPos blockPos = world.locateStructure(
+                StructureTags.VILLAGE,
+                origin.offset(Direction.SOUTH, 500),
+                1000,
+                false// skip unexplored chunks?
+        );
+        if (blockPos != null && blockPos.getSquaredDistance(origin) > 300) {
+            return blockPos;
+        }
+        return find2ndNearestPlainsVillage(world, blockPos.offset(Direction.NORTH, 500));
+    }
+
     private BlockPos findNearestPlainsVillage(ServerWorld world, BlockPos origin) {
         return world.locateStructure(
                 StructureTags.VILLAGE,
@@ -118,7 +147,7 @@ public class ExampleMod implements ModInitializer {
         world.setBlockState(pos, Blocks.DIRT_PATH.getDefaultState());
     }
 
-    private void createPathTo(BlockPos start, BlockPos end, World world) {
+    private void createPathTo(World world, BlockPos start, BlockPos end) {
         int length = (int) start.getSquaredDistance(end);
         if (length == 0) return;
 
